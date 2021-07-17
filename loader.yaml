@@ -1,0 +1,22 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: loader
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: loader
+        image: busybox
+        command:
+          - sh
+          - -c
+          - |
+            counter=0
+            while true ; do
+              counter="$(( counter + 1 ))"
+              echo "$counter: $( wget -q -O- http://php-apache )"
+            done

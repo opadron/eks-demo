@@ -1,0 +1,118 @@
+
+SOME INITIAL SETTINGS
+export AWS_PROFILE=iarpa
+export AWS_REGION=us-west-2
+export KUBECONFIG=~/.kube/configs/iarpa
+
+
+
+ - Create eks cluster, use the existing private subnets
+ - Create an IAM Role for handling cluster access
+   - Use case -> EKS -> EKS - Cluster
+ - Edit trust relationships; list authorized user ARNs.
+    ```
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Principal": {
+            "AWS": [
+              "arn:aws:iam::123456789012:user/JohnDoe",
+              "arn:aws:iam::123456789012:user/JaneDoe"
+            ]
+          },
+          "Action": "sts:AssumeRole"
+        }
+      ]
+    }
+    ```
+ - Add/edit aws-auth config map.
+    ```
+    curl -o aws-auth-cm.yaml https://s3.us-west-2.amazonaws.com/amazon-eks/cloudformation/2020-10-29/aws-auth-cm.yaml
+    $EDITOR aws-auth-cm.yaml
+    ```
+ - Add a role mapping for the new role created above.
+    ```
+    ...
+    mapRoles: |
+      - rolearn: arn:aws:iam:...
+        username: admin
+        groups:
+          - system:masters
+    ...
+    ```
+ - Update your local kubeconfig to assume the new role when authenticating.
+
+-----
+ - create another IAM role for fargate pods
+   - Use case -> EKS -> EKS - Fargate pod
+ - create fargate profile using the above role and only private subnets
+   - namespaces:
+     - default
+     - kube-system
+     - cert-manager
+     - flux
+     - ingress-nginx
+ - patch the coredns deployment -- remove the compute-type : ec2 annotation
+
+DETOUR: Set up an OIDC provider for your cluster
+ https://docs.aws.amazon.com/eks/latest/userguide/enable-iam-roles-for-service-accounts.html
+   - Follow the "Management Console" instructions
+
+TODO:
+  - setup AWS load balancer controller
+https://docs.aws.amazon.com/eks/latest/userguide/aws-load-balancer-controller.html
+    ```
+    # download and apply IAM policy
+    curl -o iam_policy.json
+    https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.2.0/docs/install/iam_policy.json
+
+    aws --profile iarpa iam create-policy --policy-name
+        AWSLoadBalancerControllerIAMPolicy \
+        --policy-document file://iam_policy.json
+
+    # TAKE NOTE OF THE POLICY ARN RETURNED
+    ```
+
+arn:aws:iam::023300502152:policy/AWSLoadBalancerControllerIAMPolicy
+
+ - TAG Public and Private subnects for ALB and NLB
+ https://docs.aws.amazon.com/eks/latest/userguide/alb-ingress.html
+
+ - annotation for alb ingresses
+       annotations:
+         kubernetes.io/ingress.class: alb
+
+         ... actually, this annotation is deprecated ...
+         ... use the .spec.ingressClassName field instead.
+
+ - annotation for ip traffic mode
+       annotations:
+         alb.ingress.kubernetes.io/target-type: ip
+
+         ^ this is required to target pods running on fargate
+
+
+  - install kubernetes metrics server
+  kubectl top nodes
+  kubectl top pods
+  https://docs.aws.amazon.com/eks/latest/userguide/metrics-server.html
+
+  - vertical pod autoscaler
+  https://docs.aws.amazon.com/eks/latest/userguide/vertical-pod-autoscaler.html
+
+  - horizontal pod autoscaler
+  https://docs.aws.amazon.com/eks/latest/userguide/horizontal-pod-autoscaler.html
+
+  - deploy sample application
+    - php-apache
+    - without vpa/without hpa
+    - add vpa + recreate pod
+    - add hpa + stress test with loader
+
+  - port ecs task definition
+    - Add image pull secrets
+
+  - BONUS: working around the lack of a job cleaner.
+

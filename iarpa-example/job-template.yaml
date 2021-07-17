@@ -1,0 +1,47 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: watch-test-${JOB_ID}
+  labels:
+    jobgroup: watch-test
+    jobid: "${JOB_ID}"
+spec:
+  # the job is "complete" when it runs one pod to successful completion
+  completions: 1
+
+  # make up to three attempts to run the job pod; fail if none of the attempts
+  # ran to successful completion
+  backoffLimit: 3
+
+  template:
+    metadata:
+      labels:
+        jobgroup: watch-test
+        jobid: "${JOB_ID}"
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: gitlab-pull-secret
+      containers:
+        - name: watch-test
+          image: "gitlab.kitware.com:4567/smart/watch/watch"
+          command:
+            - /bin/bash
+            - --login
+            - -c
+            - |
+              eval 'echo "[JOB_ID: $''JOB_ID]"'
+              conda activate watch
+              cd /watch
+              python run_tests.py
+          env:
+            - name: JOB_ID
+              value: "${JOB_ID}"
+          resources:
+            requests:
+              cpu: 1000m
+              memory: 4Gi
+            limits:
+              cpu: 1000m
+              memory: 8Gi

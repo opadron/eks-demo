@@ -1,0 +1,98 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: job-cleaner
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: job-cleaner
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "delete"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: job-cleaner
+subjects:
+  - kind: ServiceAccount
+    name: job-cleaner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: job-cleaner
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: job-cleaner
+data:
+  template: "\
+    {{range $v := .items}}{{if .status.conditions}}\
+    {{with (index .status.conditions 0)}}\
+    {{if and (eq .status \"True\") \
+    (or (eq .type \"Complete\") (eq .type \"Failed\") )}}\
+    {{printf \"%s\\n\" $v.metadata.name}}\
+    {{end}}{{end}}{{end}}{{end}}"
+
+---
+apiVersion: batch/v1beta1
+kind: CronJob
+metadata:
+  name: job-cleaner
+spec:
+  schedule: "0 */6 * * *"
+
+  # NOTE(opadron): Don't keep successful or failed instances of this CronJob
+  # around (they would get deleted by the next scheduled invocation, anyway).
+  successfulJobsHistoryLimit: 0
+  failedJobsHistoryLimit: 0
+
+  jobTemplate:
+    spec:
+      completions: 1
+      backoffLimit: 3
+      template:
+        spec:
+          serviceAccount: job-cleaner
+          restartPolicy: Never
+          containers:
+            - name: kubectl
+              image: bitnami/kubectl
+              command:
+                - /bin/bash
+                - --login
+                - -c
+                - |
+                  date
+                  export PATH="/opt/bitnami/kubectl/bin:$PATH"
+                  echo
+                  kubectl get jobs \
+                          --namespace "$NAMESPACE" \
+                          --output=go-template-file \
+                          --template=/template | \
+                      xargs kubectl delete jobs --namespace "$NAMESPACE"
+              env:
+                - name: NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+              volumeMounts:
+                - name: template
+                  mountPath: /template
+                  subPath: template
+                  readOnly: true
+              resources:
+                limits:
+                  cpu: 100m
+                  memory: 100Mi
+          volumes:
+            - name: template
+              configMap:
+                name: job-cleaner
