@@ -7,7 +7,7 @@
 
 - Environment variables:
 
-  ```
+  ```console
   export AWS_PROFILE=iarpa                 # my AWS profile name
   export AWS_REGION=us-west-2              # AWS region
   export KUBECONFIG=~/.kube/configs/iarpa  # location of my kubeconfig
@@ -28,7 +28,7 @@
 - Create an IAM Role for handling cluster authentication.
   - Edit trust relationships; list authorized user ARNs.
   
-    ```
+    ```json
     {
       "Version": "2012-10-17",
       "Statement": [
@@ -48,15 +48,46 @@
 
 #### Set up OIDC provider for cluster (needed for later)
 
-- [link](https://docs.aws.amazon.com/eks/latest/userguide/authenticate-oidc-identity-provider.html)
+- [link](https://docs.aws.amazon.com/eks/latest/userguide/enable-iam-roles-for-service-accounts.html)
 
 
 #### Bootstrap IAM authentication for cluster
 
-- [link](https://docs.aws.amazon.com/eks/latest/userguide/add-user-role.html)
-- Follow the section titled "To add an IAM user or role to an Amazon EKS
-  cluster".
+- Configure kubectl for cluster access.
+
+  ```console
+  aws eks update-kubeconfig --name EKS_DEMO
+  ```
+
+  - [link](https://docs.aws.amazon.com/eks/latest/userguide/getting-started-console.html#eks-configure-kubectl)
+
+  - Ensure that you can access the cluster.
+
+    ```console
+    kubectl get svc
+    ```
+
+- Add the cluster access role the aws-auth config map.
+  - [link](https://docs.aws.amazon.com/eks/latest/userguide/add-user-role.html)
+
 - Update your local kubeconfig to assume the new role when authenticating.
+
+  ```diff
+         - us-west-2
+         - eks
+         - get-token
+  +      - --role
+  +      - arn:aws:iam::001122334455:role/ROLE_NAME
+         - --cluster-name
+         - CLUSTER_NAME
+         command: aws
+  ```
+
+  - Ensure that you can access the cluster.
+
+    ```
+    $ kubectl get svc
+    ```
 
 
 #### Set up fargate
@@ -69,38 +100,56 @@
   - namespaces:
     - default
     - kube-system
-    - cert-manager
-    - flux
-    - ingress-nginx
 - patch the coredns deployment
   - remove the `compute-type : ec2` annotation
 
 
 #### Set up application/network load balancing
 
-- tag public and private subnects for ALB and NLB
+- tag public and private subnets for ALB and NLB
   - [link](https://docs.aws.amazon.com/eks/latest/userguide/alb-ingress.html)
 
 - install AWS load balancer controller
   - [link](https://docs.aws.amazon.com/eks/latest/userguide/aws-load-balancer-controller.html)
+  - IMPORTANT: Since we're only running on Fargate, EC2 metadata is not
+    available, so region and vpc id have to be specified explicitly. See
+    [this](https://github.com/kubernetes-sigs/aws-load-balancer-controller/issues/1659#issuecomment-728369347)
+    issue for details.
+
+    ```console
+    helm upgrade -i aws-load-balancer-controller \
+        eks/aws-load-balancer-controller         \
+            --set clusterName=CLUSTER_NAME       \
+            --set serviceAccount.create=false    \
+            --set serviceAccount.name=aws-load-balancer-controller \
+            --set region="$AWS_REGION"           \
+            --set vpcId=vpc-00112233445566778 \
+            -n kube-system
+    ```
+
+- apply ingress class in this repo
+
+  ```console
+  kubectl apply -f ingress-class.yaml
+  ```
 
 
-#### Install kubernetes metrics server
+#### (Optional, for Demo 1) Install kubernetes metrics server
 
 - [link](https://docs.aws.amazon.com/eks/latest/userguide/metrics-server.html)
 
 
-#### Install vertical pod autoscaler
+#### (Optional, for Demo 1) Install vertical pod autoscaler
 
 - [link](https://docs.aws.amazon.com/eks/latest/userguide/vertical-pod-autoscaler.html)
 
 
-#### (Optional) read up on horizontal pod autoscaler
+#### (Optional, for Demo 1) read up on horizontal pod autoscaler
 
 - [link](https://docs.aws.amazon.com/eks/latest/userguide/horizontal-pod-autoscaler.html)
 
 
-#### Demo 1: Sample application
+#### (Optional) Demo 1: Sample application
 
 - php-apache
   - without vpa or hpa
@@ -126,4 +175,6 @@
 4. Delete IAM policy for load balancer controller
 5. Delete IAM role for cluster access
 6. Delete IAM role for EKS control plane
+7. Delete OIDC identity provider for cluster (IAM -> identity providers)
+8. Remove the tags on the public and private subnets.
 
